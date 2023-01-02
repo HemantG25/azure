@@ -1,0 +1,112 @@
+# PowerShell code
+ 
+########################################################
+# Parameters
+########################################################
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$True,Position=0)]
+    [ValidateSet('Start','Stop')]
+    [string]$VirtualMachineAction,
+     
+    [Parameter(Mandatory=$True,Position=1)]
+    [ValidateLength(1,100)]
+    [string]$ResourceGroupName,
+ 
+    [Parameter(Mandatory=$True,Position=2)]
+    [ValidateLength(1,100)]
+    [string]$VirtualMachineName
+)
+ 
+# Keep track of time
+$StartDate=(GET-DATE)
+ 
+ 
+ 
+########################################################
+# Log in to Azure with AZ (standard code)
+########################################################
+Write-Verbose -Message 'Connecting to Azure'
+  
+# Name of the Azure Run As connection
+$ConnectionName = 'AzureRunAsConnection'
+try
+{
+    # Get the connection properties
+    $ServicePrincipalConnection = Get-AutomationConnection -Name $ConnectionName      
+   
+    'Log in to Azure...'
+    $null = Connect-AzAccount `
+        -ServicePrincipal `
+        -TenantId $ServicePrincipalConnection.TenantId `
+        -ApplicationId $ServicePrincipalConnection.ApplicationId `
+        -CertificateThumbprint $ServicePrincipalConnection.CertificateThumbprint 
+}
+catch 
+{
+    if (!$ServicePrincipalConnection)
+    {
+        # You forgot to turn on 'Create Azure Run As account' 
+        $ErrorMessage = "Connection $ConnectionName not found."
+        throw $ErrorMessage
+    }
+    else
+    {
+        # Something else went wrong
+        Write-Error -Message $_.Exception.Message
+        throw $_.Exception
+    }
+}
+########################################################
+  
+ 
+ 
+ 
+########################################################
+# Getting the VM for testing and logging purposes
+########################################################
+$myVirtualMachine = Get-AzVM -ResourceGroupName $ResourceGroupName -Name $VirtualMachineName
+if (!$myVirtualMachine)
+{
+    Write-Error "$($VirtualMachineName) not found in $($ResourceGroupName)"
+    return
+}
+else
+{
+    # Get status of VM when user provides data for existing VM
+    $myVirtualMachineState = ((Get-AzVM -ResourceGroupName $ResourceGroupName -Name $VirtualMachineName -Status).Statuses | Where {$_.code -like 'PowerState/*'}).Code
+    Write-Output "Current status of $($VirtualMachineName): $($myVirtualMachineState)"
+}
+ 
+ 
+ 
+########################################################
+# Start or Stop VM
+########################################################
+# Check for incompatible actions
+if (($VirtualMachineAction -eq "Start" -And $myVirtualMachineState -eq "PowerState/running") -Or ($VirtualMachineAction -eq "Stop" -And $myVirtualMachineState -eq "PowerState/deallocated"))
+{
+    Write-Error "Cannot $($VirtualMachineAction) $($VirtualMachineName) while the status is $($myVirtualMachineState)"
+    return
+}
+# Resume Azure Analysis Services
+elseif ($VirtualMachineAction -eq "Start")
+{
+    Write-Output "Now starting $($VirtualMachineName)"
+    Start-AzVM -ResourceGroupName $ResourceGroupName -Name $VirtualMachineName -Confirm:$false
+}
+# Pause Azure Analysis Services
+else
+{
+    Write-Output "Now stopping $($VirtualMachineName)"
+    $null = Stop-AzVM -ResourceGroupName $ResourceGroupName -Name $VirtualMachineName -Confirm:$false -Force
+}
+ 
+ 
+ 
+########################################################
+# Show when finished
+########################################################
+$Duration = NEW-TIMESPAN –Start $StartDate –End (GET-DATE)
+Write-Output "Done in $([int]$Duration.TotalMinutes) minute(s) and $([int]$Duration.Seconds) second(s)"
+
